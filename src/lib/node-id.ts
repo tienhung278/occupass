@@ -39,3 +39,13 @@ export function getOrderIdFromNodeId(nodeId: string): number | null {
   const orderId = Number(decoded.entityId)
   return Number.isInteger(orderId) ? orderId : null
 }
+
+export function getCustomerIdFromNodeId(nodeId: string): string | null {
+  const decoded = decodeNodeId(nodeId)
+
+  if (!decoded || decoded.type !== 'Customer') {
+    return null
+  }
+
+  return decoded.entityId
+}

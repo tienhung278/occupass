@@ -1,5 +1,5 @@
 import { requestGraphQL } from '../../lib/graphql-client'
-import { encodeNodeId } from '../../lib/node-id'
+import { encodeNodeId, getCustomerIdFromNodeId } from '../../lib/node-id'
 import type { SortDirection } from '../orders/api'
 
 export type CustomerSortColumn = 'customerId' | 'companyName' | 'contactName' | 'city' | 'country'
@@ -39,6 +39,29 @@ export interface CustomersPage {
   rows: CustomerListRow[]
   nextCursor: string | null
   hasNextPage: boolean
+}
+
+interface CustomerListNode {
+  id: string
+  companyName: string
+  contactName: string | null
+  city: string | null
+  country: string | null
+}
+
+interface CustomersConnectionResponse {
+  customers: {
+    nodes: CustomerListNode[]
+    pageInfo: {
+      hasNextPage: boolean
+      endCursor: string | null
+    }
+  }
+}
+
+interface CustomersConnectionVariables {
+  first: number
+  after: string | null
 }
 
 interface CustomerOrderEdge {
@@ -145,12 +168,20 @@ function buildCustomerWhere(filters: CustomerFilters): string | null {
   return `{ ${entries.join(', ')} }`
 }
 
-function buildCustomerSort(column: CustomerSortColumn, direction: SortDirection): string {
+function hasActiveFilters(filters: CustomerFilters): boolean {
+  return Object.values(filters).some((value) => value.trim().length > 0)
+}
+
+function buildCustomerSortForOrders(column: CustomerSortColumn, direction: SortDirection): string {
   if (column === 'customerId') {
     return `[{ customerId: ${direction} }, { orderId: ASC }]`
   }
 
   return `[{ customer: { ${column}: ${direction} } }, { orderId: ASC }]`
+}
+
+function buildCustomerSortForCustomers(column: CustomerSortColumn, direction: SortDirection): string {
+  return `[{ ${column}: ${direction} }]`
 }
 
 function createCustomersFromOrdersQuery(whereClause: string | null, orderClause: string): string {
@@ -180,6 +211,26 @@ function createCustomersFromOrdersQuery(whereClause: string | null, orderClause:
   `
 }
 
+function createCustomersQuery(orderClause: string): string {
+  return `
+    query CustomersList($first: Int!, $after: String) {
+      customers(first: $first, after: $after, order: ${orderClause}) {
+        nodes {
+          id
+          companyName
+          contactName
+          city
+          country
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  `
+}
+
 export async function fetchCustomersPage(params: {
   first: number
   after: string | null
@@ -187,10 +238,46 @@ export async function fetchCustomersPage(params: {
   sortColumn: CustomerSortColumn
   sortDirection: SortDirection
 }): Promise<CustomersPage> {
+  if (!hasActiveFilters(params.filters)) {
+    const orderClause = buildCustomerSortForCustomers(params.sortColumn, params.sortDirection)
+    const query = createCustomersQuery(orderClause)
+    const response = await requestGraphQL<CustomersConnectionResponse, CustomersConnectionVariables>(
+      query,
+      {
+        first: params.first,
+        after: params.after,
+      },
+    )
+
+    const rows: CustomerListRow[] = []
+    for (const node of response.customers.nodes) {
+      const customerId = getCustomerIdFromNodeId(node.id)
+      if (!customerId) {
+        continue
+      }
+
+      rows.push({
+        customerId,
+        nodeId: node.id,
+        companyName: node.companyName,
+        contactName: node.contactName,
+        city: node.city,
+        country: node.country,
+      })
+    }
+
+    return {
+      rows,
+      nextCursor: response.customers.pageInfo.endCursor,
+      hasNextPage: response.customers.pageInfo.hasNextPage,
+    }
+  }
+
   const whereClause = buildCustomerWhere(params.filters)
-  const orderClause = buildCustomerSort(params.sortColumn, params.sortDirection)
+  const orderClause = buildCustomerSortForOrders(params.sortColumn, params.sortDirection)
   const query = createCustomersFromOrdersQuery(whereClause, orderClause)
   const rowsById = new Map<string, CustomerListRow>()
+  const scanBatchSize = Math.min(50, Math.max(params.first, 1) * 4)
 
   let currentCursor = params.after
   let hasNextPage = false
@@ -201,7 +288,7 @@ export async function fetchCustomersPage(params: {
     const response = await requestGraphQL<CustomersFromOrdersResponse, CustomersFromOrdersVariables>(
       query,
       {
-        first: params.first,
+        first: scanBatchSize,
         after: currentCursor,
       },
     )
