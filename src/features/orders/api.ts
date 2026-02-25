@@ -51,8 +51,6 @@ export interface OrdersPage {
 }
 
 export interface OrderLineItem {
-  orderId: string
-  productId: string
   unitPrice: number
   quantity: number
   discount: number
@@ -145,8 +143,6 @@ const ORDER_DETAIL_QUERY = `
           country
         }
         orderDetails {
-          orderId
-          productId
           unitPrice
           quantity
           discount

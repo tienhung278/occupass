@@ -132,12 +132,13 @@ export function OrderDetailPage() {
                   </td>
                 </tr>
               ) : (
-                order.orderDetails.map((line) => {
+                order.orderDetails.map((line, index) => {
                   const lineTotal = line.unitPrice * line.quantity * (1 - line.discount)
+                  const lineKey = `${line.product?.id ?? 'unknown-product'}-${index}`
 
                   return (
-                    <tr key={`${line.orderId}-${line.productId}`}>
-                      <td>{line.product?.productName ?? line.productId}</td>
+                    <tr key={lineKey}>
+                      <td>{line.product?.productName ?? line.product?.id ?? 'Unknown product'}</td>
                       <td>{line.quantity}</td>
                       <td>{formatCurrency(line.unitPrice)}</td>
                       <td>{Math.round(line.discount * 100)}%</td>
