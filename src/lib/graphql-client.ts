@@ -1,24 +1,33 @@
 import { ClientError, GraphQLClient } from 'graphql-request'
 
-const REMOTE_ENDPOINT = 'https://gqltest.occupass.com/graphql/'
+const LOCAL_PROXY_ENDPOINT = '/graphql/'
+const FALLBACK_BASE_URL = 'http://localhost'
+
+function toAbsoluteEndpoint(endpoint: string): string {
+  if (/^https?:\/\//i.test(endpoint)) {
+    return endpoint
+  }
+
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+  const base = typeof window !== 'undefined' ? window.location.origin : FALLBACK_BASE_URL
+  return new URL(normalized, base).toString()
+}
 
 function resolveApiEndpoint(): string {
-  const configured = import.meta.env.VITE_GRAPHQL_ENDPOINT?.trim()
-  const candidate = configured && configured.length > 0
-    ? configured
-    : import.meta.env.DEV
-      ? '/graphql/'
-      : REMOTE_ENDPOINT
+  const configured = import.meta.env.VITE_GRAPHQL_ENDPOINT?.trim() ?? ''
+  const hasConfigured = configured.length > 0
+
+  // Keep development requests same-origin so Vite proxy can avoid browser CORS blocks.
+  if (import.meta.env.DEV && (!hasConfigured || /^https?:\/\//i.test(configured))) {
+    return toAbsoluteEndpoint(LOCAL_PROXY_ENDPOINT)
+  }
+
+  const candidate = hasConfigured ? configured : LOCAL_PROXY_ENDPOINT
 
   try {
-    if (/^https?:\/\//i.test(candidate)) {
-      return candidate
-    }
-
-    const base = typeof window !== 'undefined' ? window.location.origin : REMOTE_ENDPOINT
-    return new URL(candidate, base).toString()
+    return toAbsoluteEndpoint(candidate)
   } catch {
-    return REMOTE_ENDPOINT
+    return toAbsoluteEndpoint(LOCAL_PROXY_ENDPOINT)
   }
 }
 

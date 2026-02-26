@@ -1,67 +1,72 @@
 # OccuPass GraphQL Assignment
 
-Client-side SPA built with Vite + React + TypeScript, using:
+Client-side SPA built with Vite, React 19, and TypeScript.
+
+## Stack
+
+- Vite + React + TypeScript
 - TanStack Router
 - TanStack Query
 - TanStack Table
 - React Hook Form + Zod
 - Radix Themes
+- GraphQL Request
 
-## Run
+## Getting Started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Dev mode uses a Vite proxy (`/graphql` -> `https://gqltest.occupass.com`) to avoid browser CORS issues.
+The app runs on Vite dev server (default: `http://localhost:5173`).
 
-Optional endpoint override:
-
-```bash
-# .env.local
-VITE_GRAPHQL_ENDPOINT=https://gqltest.occupass.com/graphql/
-```
-
-Production build:
+## Scripts
 
 ```bash
+npm run dev
 npm run build
+npm run preview
+npm run lint
 ```
 
-Lint:
+## Routes
+
+- `/` redirects to `/orders`
+- `/orders`
+- `/orders/$orderId`
+- `/customers`
+- `/customers/$customerId`
+
+## API Configuration
+
+### Development (`npm run dev`)
+
+- Client requests are sent to `/graphql/`.
+- Vite proxies `/graphql` traffic to `https://gqltest.occupass.com`.
+- If `VITE_GRAPHQL_ENDPOINT` is an absolute URL, the app still uses `/graphql/` in dev to avoid browser CORS issues and rely on the proxy.
+
+### Production (`npm run build` + `npm run preview` or deployed build)
+
+- If `VITE_GRAPHQL_ENDPOINT` is set, that value is used.
+- If `VITE_GRAPHQL_ENDPOINT` is empty, the app falls back to `/graphql/` on the same origin.
+
+Example:
 
 ```bash
-npm run lint
+# .env
+VITE_GRAPHQL_ENDPOINT=https://gqltest.occupass.com/graphql/
 ```
 
 ## Implemented Screens
 
-- `Orders` list
-  - Server-side cursor paging (`first`, `after`)
-  - Server-side filtering (`where`)
-  - Server-side sorting (`order`)
-  - Row link to order detail
-- `Order detail`
-  - Profile fields + line items
-  - Link to customer detail
-- `Customers` list
-  - Separate customer view
-  - Filtering and sorting controls
-  - Cursor paging backed by GraphQL order stream
-- `Customer detail`
-  - Profile fields
-  - Associated orders table with cursor paging + sorting
+- `Orders` list (`/orders`): server-side cursor paging, filtering, sorting, and row links to order/customer detail pages.
+- `Order detail` (`/orders/$orderId`): order profile fields, line items with calculated totals, and link to related customer.
+- `Customers` list (`/customers`): server-side cursor paging, filtering, sorting, and row links to customer detail.
+- `Customer detail` (`/customers/$customerId`): customer profile fields and related orders table with sorting and cursor paging.
 
-## Important Schema Note
+## Data Access Notes
 
-The API schema at `https://gqltest.occupass.com/graphql/?sdl` currently does **not** expose a top-level `customers` query on `Query`.
-
-Available root fields are:
-- `orders`
-- `products`
-- `employees`
-- `node`
-- `nodes`
-
-Because of this, the customer list is derived from paged `orders` results (deduplicated by `customerId`), while customer detail is fetched via `node(id: ...)`.
+- Customer list uses the `customers(...)` GraphQL connection.
+- Customer detail uses `node(id: ...)`, with encoded node IDs in the form `Customer:<customerId>` (base64).
+- Order IDs displayed in tables/details are decoded from GraphQL node IDs in the form `Order:<orderId>`.
