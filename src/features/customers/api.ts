@@ -64,34 +64,6 @@ interface CustomersConnectionVariables {
   after: string | null
 }
 
-interface CustomerOrderEdge {
-  cursor: string
-  node: {
-    customerId: string | null
-    customer: {
-      id: string
-      companyName: string
-      contactName: string | null
-      city: string | null
-      country: string | null
-    } | null
-  }
-}
-
-interface CustomersFromOrdersResponse {
-  orders: {
-    edges: CustomerOrderEdge[]
-    pageInfo: {
-      hasNextPage: boolean
-    }
-  }
-}
-
-interface CustomersFromOrdersVariables {
-  first: number
-  after: string | null
-}
-
 interface CustomerNodeResponse {
   node: {
     __typename: string
@@ -144,22 +116,13 @@ function buildContainsFilter(field: string, value: string): string | null {
 }
 
 function buildCustomerWhere(filters: CustomerFilters): string | null {
-  const orderEntries = [buildContainsFilter('customerId', filters.customerId)].filter(
-    (entry): entry is string => entry !== null,
-  )
-
-  const customerEntries = [
+  const entries = [
+    buildContainsFilter('customerId', filters.customerId),
     buildContainsFilter('companyName', filters.companyName),
     buildContainsFilter('contactName', filters.contactName),
     buildContainsFilter('city', filters.city),
     buildContainsFilter('country', filters.country),
   ].filter((entry): entry is string => entry !== null)
-
-  const entries = [...orderEntries]
-
-  if (customerEntries.length > 0) {
-    entries.push(`customer: { ${customerEntries.join(', ')} }`)
-  }
 
   if (entries.length === 0) {
     return null
@@ -168,53 +131,16 @@ function buildCustomerWhere(filters: CustomerFilters): string | null {
   return `{ ${entries.join(', ')} }`
 }
 
-function hasActiveFilters(filters: CustomerFilters): boolean {
-  return Object.values(filters).some((value) => value.trim().length > 0)
-}
-
-function buildCustomerSortForOrders(column: CustomerSortColumn, direction: SortDirection): string {
-  if (column === 'customerId') {
-    return `[{ customerId: ${direction} }, { orderId: ASC }]`
-  }
-
-  return `[{ customer: { ${column}: ${direction} } }, { orderId: ASC }]`
-}
-
-function buildCustomerSortForCustomers(column: CustomerSortColumn, direction: SortDirection): string {
+function buildCustomerSort(column: CustomerSortColumn, direction: SortDirection): string {
   return `[{ ${column}: ${direction} }]`
 }
 
-function createCustomersFromOrdersQuery(whereClause: string | null, orderClause: string): string {
+function createCustomersQuery(whereClause: string | null, orderClause: string): string {
   const whereArgument = whereClause ? `, where: ${whereClause}` : ''
 
   return `
-    query CustomersFromOrders($first: Int!, $after: String) {
-      orders(first: $first, after: $after${whereArgument}, order: ${orderClause}) {
-        edges {
-          cursor
-          node {
-            customerId
-            customer {
-              id
-              companyName
-              contactName
-              city
-              country
-            }
-          }
-        }
-        pageInfo {
-          hasNextPage
-        }
-      }
-    }
-  `
-}
-
-function createCustomersQuery(orderClause: string): string {
-  return `
     query CustomersList($first: Int!, $after: String) {
-      customers(first: $first, after: $after, order: ${orderClause}) {
+      customers(first: $first, after: $after${whereArgument}, order: ${orderClause}) {
         nodes {
           id
           companyName
@@ -238,106 +164,38 @@ export async function fetchCustomersPage(params: {
   sortColumn: CustomerSortColumn
   sortDirection: SortDirection
 }): Promise<CustomersPage> {
-  if (!hasActiveFilters(params.filters)) {
-    const orderClause = buildCustomerSortForCustomers(params.sortColumn, params.sortDirection)
-    const query = createCustomersQuery(orderClause)
-    const response = await requestGraphQL<CustomersConnectionResponse, CustomersConnectionVariables>(
-      query,
-      {
-        first: params.first,
-        after: params.after,
-      },
-    )
-
-    const rows: CustomerListRow[] = []
-    for (const node of response.customers.nodes) {
-      const customerId = getCustomerIdFromNodeId(node.id)
-      if (!customerId) {
-        continue
-      }
-
-      rows.push({
-        customerId,
-        nodeId: node.id,
-        companyName: node.companyName,
-        contactName: node.contactName,
-        city: node.city,
-        country: node.country,
-      })
-    }
-
-    return {
-      rows,
-      nextCursor: response.customers.pageInfo.endCursor,
-      hasNextPage: response.customers.pageInfo.hasNextPage,
-    }
-  }
-
   const whereClause = buildCustomerWhere(params.filters)
-  const orderClause = buildCustomerSortForOrders(params.sortColumn, params.sortDirection)
-  const query = createCustomersFromOrdersQuery(whereClause, orderClause)
-  const rowsById = new Map<string, CustomerListRow>()
-  const scanBatchSize = Math.min(50, Math.max(params.first, 1) * 4)
+  const orderClause = buildCustomerSort(params.sortColumn, params.sortDirection)
+  const query = createCustomersQuery(whereClause, orderClause)
+  const response = await requestGraphQL<CustomersConnectionResponse, CustomersConnectionVariables>(
+    query,
+    {
+      first: params.first,
+      after: params.after,
+    },
+  )
 
-  let currentCursor = params.after
-  let hasNextPage = false
-  let reachedPageSize = false
-  let lastSeenCursor = params.after
-
-  while (rowsById.size < params.first) {
-    const response = await requestGraphQL<CustomersFromOrdersResponse, CustomersFromOrdersVariables>(
-      query,
-      {
-        first: scanBatchSize,
-        after: currentCursor,
-      },
-    )
-
-    const { edges, pageInfo } = response.orders
-
-    if (edges.length === 0) {
-      hasNextPage = false
-      break
+  const rows: CustomerListRow[] = []
+  for (const node of response.customers.nodes) {
+    const customerId = getCustomerIdFromNodeId(node.id)
+    if (!customerId) {
+      continue
     }
 
-    hasNextPage = pageInfo.hasNextPage
-
-    for (const edge of edges) {
-      lastSeenCursor = edge.cursor
-      currentCursor = edge.cursor
-      const customerId = edge.node.customerId
-      const customer = edge.node.customer
-
-      if (!customerId || !customer) {
-        continue
-      }
-
-      if (!rowsById.has(customerId)) {
-        rowsById.set(customerId, {
-          customerId,
-          nodeId: customer.id,
-          companyName: customer.companyName,
-          contactName: customer.contactName,
-          city: customer.city,
-          country: customer.country,
-        })
-      }
-
-      if (rowsById.size === params.first) {
-        reachedPageSize = true
-        break
-      }
-    }
-
-    if (reachedPageSize || !hasNextPage) {
-      break
-    }
+    rows.push({
+      customerId,
+      nodeId: node.id,
+      companyName: node.companyName,
+      contactName: node.contactName,
+      city: node.city,
+      country: node.country,
+    })
   }
 
   return {
-    rows: Array.from(rowsById.values()),
-    nextCursor: reachedPageSize || hasNextPage ? lastSeenCursor : null,
-    hasNextPage: reachedPageSize || hasNextPage,
+    rows,
+    nextCursor: response.customers.pageInfo.endCursor,
+    hasNextPage: response.customers.pageInfo.hasNextPage,
   }
 }
 
